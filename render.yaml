@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: ultraviolet-proxy
+    env: node
+    plan: free
+    buildCommand: "npm install"
+    startCommand: "node server.js"
+    autoDeploy: true
+    healthCheckPath: "/healthz"
+    envVars:
+      - key: ENABLE_LOGS
+        value: "true"
+      - key: BARE_PATH
+        value: "/bare/"
+      - key: UV_PUBLIC_PATH
+        value: "/"
+      - key: RATE_POINTS
+        value: "300"
+      - key: RATE_DURATION
+        value: "60"
