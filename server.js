@@ -13,74 +13,69 @@
  *   RATE_DURATION=60         # Window (seconds)
  *   CORS_ORIGIN=*            # Allowed origin for preflight (simple example)
  */
-import 'dotenv/config';
-import express from 'express';
-import helmet from 'helmet';
-import compression from 'compression';
-import morgan from 'morgan';
-import { RateLimiterMemory } from 'rate-limiter-flexible';
-import { uvPath } from '@titaniumnetwork-dev/ultraviolet';
-import { createBareServer } from '@tomphttp/bare-server-node';
+// server.js
+import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
+import helmet from "helmet";
+import compression from "compression";
+import morgan from "morgan";
+import dotenv from "dotenv";
+import { createBareServer } from "@tomphttp/bare-server-node";
+import { uvPath } from "@titaniumnetwork-dev/ultraviolet";
+import { createServer as createUVServer } from "@titaniumnetwork-dev/ultraviolet";
 
+// === Setup ===
+dotenv.config();
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// ---- Config ----
-const PORT = process.env.PORT || 8080;
-const BARE_PATH = process.env.BARE_PATH || '/bare/';
-const UV_PUBLIC_PATH = process.env.UV_PUBLIC_PATH || '/';
-const ENABLE_LOGS = /^true$/i.test(process.env.ENABLE_LOGS || 'true');
-const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
-const RATE_POINTS = parseInt(process.env.RATE_POINTS || '200', 10);   // requests
-const RATE_DURATION = parseInt(process.env.RATE_DURATION || '60', 10); // per seconds
+// Needed for __dirname in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// ---- Middleware ----
-app.use(helmet({
-  contentSecurityPolicy: false, // UV does heavy rewriting; strict CSP can break it
-  crossOriginEmbedderPolicy: false,
-}));
+// === Middleware ===
+app.use(helmet());
 app.use(compression());
-if (ENABLE_LOGS) app.use(morgan('combined'));
+app.use(morgan("dev"));
 
-// Simple CORS (adjust as you like)
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  next();
+// === FRONT-END HOSTING ===
+// Serve your HTML, CSS, JS files from the same folder as server.js
+app.use(express.static(__dirname));
+
+// When a user visits "/", show your index.html
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// Rate limiting (basic, memory-based; for multi-instance use Redis)
-const rateLimiter = new RateLimiterMemory({ points: RATE_POINTS, duration: RATE_DURATION });
-app.use(async (req, res, next) => {
-  try {
-    await rateLimiter.consume(req.ip);
-    next();
-  } catch (e) {
-    res.status(429).send('Too Many Requests');
-  }
+// === ULTRAVIOLET PROXY BACKEND ===
+const bare = createBareServer("/bare/");
+
+// Ultraviolet server setup
+const uv = createUVServer({
+  prefix: "/uv/service/",
+  bare,
+  config: {
+    // Optional config values
+    encodeUrl: true,
+  },
+  handler: app,
 });
 
-// Serve Ultraviolet static assets (client bundle, service worker, UI)
-app.use(UV_PUBLIC_PATH, express.static(uvPath, { extensions: ['html'] }));
+// Serve Ultraviolet client files (JS bundle, config, etc.)
+app.use("/uv/", express.static(uvPath));
 
-// Health check & info
-app.get('/healthz', (_req, res) => res.status(200).json({ ok: true }));
-app.get('/config', (_req, res) => {
-  res.json({ BARE_PATH, UV_PUBLIC_PATH });
+// Bare proxy middleware
+app.use("/bare/", bare.middleware);
+
+// Catch-all (optional) for unknown paths
+app.use((req, res) => {
+  res.status(404).send("404: Not Found");
 });
 
-// ---- Bare server for proxying ----
-const bare = createBareServer(BARE_PATH);
-const server = app.listen(PORT, () => {
-  console.log(`✅ Ultraviolet running on port ${PORT}`);
-  console.log(`   UV UI: http://localhost:${PORT}${UV_PUBLIC_PATH}`);
-  console.log(`   Bare:  http://localhost:${PORT}${BARE_PATH}`);
-});
-
-server.on('request', (req, res) => {
-  if (bare.shouldRoute(req)) return bare.routeRequest(req, res);
-});
-server.on('upgrade', (req, socket, head) => {
-  if (bare.shouldRoute(req)) return bare.routeUpgrade(req, socket, head);
+// === START SERVER ===
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`✅ Server running on http://0.0.0.0:${PORT}`);
+  console.log(`✅ Front-end: http://localhost:${PORT}/`);
+  console.log(`✅ Proxy: http://localhost:${PORT}/uv/`);
 });
