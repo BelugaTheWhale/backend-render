@@ -1,14 +1,20 @@
-# Minimal Dockerfile for Ultraviolet backend
-FROM node:20-alpine
+# Use Node 18+
+FROM node:18-alpine
 
+# Create app directory
 WORKDIR /app
 
+# Copy package files first (for caching)
+COPY package*.json ./
+
 # Install dependencies
-COPY package.json ./
-RUN npm install --production
+RUN npm install
 
-# Copy app code
-COPY server.js ./
+# Copy all remaining files (including index.html, server.js, etc.)
+COPY . .
 
-EXPOSE 8080
-CMD ["node", "server.js"]
+# Expose the port Koyeb expects
+EXPOSE 3000
+
+# Start the server
+CMD ["npm", "start"]
