@@ -5,16 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Stargazer Proxy</title>
   <style>
-    body { font-family: system-ui, sans-serif; background:#0b0c10; color:#c5c6c7;
-           margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; }
-    .card { background:#111317; padding:24px; border-radius:12px; width:clamp(280px, 90vw, 680px);
-            box-shadow:0 10px 30px rgba(0,0,0,.35); }
+    body { font-family: system-ui, sans-serif; background:#0b0c10; color:#c5c6c7; margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .card { background:#111317; padding:24px; border-radius:12px; width:clamp(280px, 90vw, 680px); box-shadow:0 10px 30px rgba(0,0,0,.35); }
     h1 { color:#66fcf1; margin:0 0 8px; }
     p  { color:#45a29e; margin:0 0 16px; }
     .row { display:flex; gap:8px; flex-wrap:wrap; }
     input { flex:1 1 360px; padding:10px; border:none; border-radius:6px; font-size:16px; outline:none; }
-    button { padding:10px 16px; border:none; border-radius:6px; background:#45a29e; color:#0b0c10;
-             font-weight:700; cursor:pointer; }
+    button { padding:10px 16px; border:none; border-radius:6px; background:#45a29e; color:#0b0c10; font-weight:700; cursor:pointer; }
     button:hover { background:#66fcf1; }
     small { color:#888; display:block; margin-top:10px; }
     #status { margin-top:10px; color:#bbb; font-size:14px; }
@@ -33,32 +30,81 @@
     <div id="status">Loading Ultraviolet…</div>
   </div>
 
-  <!-- UV client files -->
+  <!-- Load UV client assets (order matters) -->
   <script src="/uv/uv.bundle.js"></script>
   <script src="/uv/uv.config.js"></script>
   <script src="/uv/uv.handler.js"></script>
   <script>
-    // Helper: normalize user input into a valid URL
-    function normalize(u) {
-      u = (u || "").trim();
-      if (!u) return "";
-      if (!/^https?:\/\//i.test(u)) u = "https://" + u;
-      try { new URL(u); return u; } catch { return ""; }
-    }
-
     const statusEl = document.getElementById('status');
-    function setStatus(msg, isErr=false) {
+    const setStatus = (msg, err=false) => {
       statusEl.textContent = msg;
-      statusEl.className = isErr ? 'err' : '';
+      statusEl.className = err ? 'err' : '';
+      console.log('[UV]', msg);
+    };
+
+    function normalize(u) {
+      u = (u || '').trim();
+      if (!u) return '';
+      if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+      try { new URL(u); return u; } catch { return ''; }
     }
 
-    // Register the UV service worker and wait until it's ready before navigating
+    function timeout(ms) {
+      return new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
+    }
+
     async function ensureUVReady() {
       if (!('serviceWorker' in navigator)) {
-        setStatus('Service workers are not supported in this browser.', true);
-        throw new Error('No SW support');
+        setStatus('Service workers not supported in this browser.', true);
+        throw new Error('no sw');
       }
       try {
-        const reg = await navigator.serviceWorker.register(__uv$config.sw, { scope: __uv$config.prefix });
-        await navigator.serviceWorker.ready;
-        setStatus('Ultraviolet is
+        // Unregister any old workers at /uv/ to avoid stale caches
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const r of regs) {
+          if (r.scope.endsWith('/uv/') || r.scope.endsWith('/uv')) {
+            await r.unregister().catch(()=>{});
+          }
+        }
+      } catch {}
+
+      try {
+        const reg = await navigator.serviceWorker.register(__uv$config.sw, { scope: '/uv/' });
+        // Wait until it's active (ready) or 8s timeout
+        await Promise.race([navigator.serviceWorker.ready, timeout(8000)]);
+        setStatus('Ultraviolet is ready.');
+        return reg;
+      } catch (e) {
+        setStatus('Failed to register UV SW: ' + (e?.message || e), true);
+        throw e;
+      }
+    }
+
+    async function openViaProxy() {
+      const raw = document.getElementById('url').value;
+      const url = normalize(raw);
+      if (!url) { setStatus('Please enter a valid URL (e.g., https://example.com).', true); return; }
+
+      try {
+        await ensureUVReady();
+        const encoded = __uv$config.encodeUrl(url); // use config encoder
+        const proxied = __uv$config.prefix + encoded; // e.g. /uv/service/<encoded>
+        setStatus('Opening: ' + url);
+        window.location.href = proxied;
+      } catch (e) {
+        // error already surfaced
+      }
+    }
+
+    document.getElementById('go').addEventListener('click', openViaProxy);
+    document.getElementById('url').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') openViaProxy();
+    });
+
+    // Kick off SW registration on load
+    (async () => {
+      try { await ensureUVReady(); } catch {}
+    })();
+  </script>
+</body>
+</html>
