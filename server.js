@@ -14,6 +14,8 @@
  *   CORS_ORIGIN=*            # Allowed origin for preflight (simple example)
  */
 // server.js
+// server.js — Frontend + Ultraviolet Backend for Node 18+
+
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -22,15 +24,17 @@ import compression from "compression";
 import morgan from "morgan";
 import dotenv from "dotenv";
 import { createBareServer } from "@tomphttp/bare-server-node";
-import { uvPath } from "@titaniumnetwork-dev/ultraviolet";
-import { createServer as createUVServer } from "@titaniumnetwork-dev/ultraviolet";
+
+// ✅ FIXED IMPORT for CommonJS Ultraviolet module
+import uvPkg from "@titaniumnetwork-dev/ultraviolet";
+const { createServer: createUVServer, uvPath } = uvPkg;
 
 // === Setup ===
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Needed for __dirname in ES modules
+// Needed for __dirname with ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -40,10 +44,10 @@ app.use(compression());
 app.use(morgan("dev"));
 
 // === FRONT-END HOSTING ===
-// Serve your HTML, CSS, JS files from the same folder as server.js
+// Serve your static files (index.html, CSS, JS, etc.)
 app.use(express.static(__dirname));
 
-// When a user visits "/", show your index.html
+// Serve index.html when visiting root
 app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
@@ -51,13 +55,11 @@ app.get("/", (_req, res) => {
 // === ULTRAVIOLET PROXY BACKEND ===
 const bare = createBareServer("/bare/");
 
-// Ultraviolet server setup
 const uv = createUVServer({
   prefix: "/uv/service/",
   bare,
   config: {
-    // Optional config values
-    encodeUrl: true,
+    // optional configuration here
   },
   handler: app,
 });
@@ -65,10 +67,10 @@ const uv = createUVServer({
 // Serve Ultraviolet client files (JS bundle, config, etc.)
 app.use("/uv/", express.static(uvPath));
 
-// Bare proxy middleware
+// Mount Bare middleware
 app.use("/bare/", bare.middleware);
 
-// Catch-all (optional) for unknown paths
+// === ERROR HANDLER ===
 app.use((req, res) => {
   res.status(404).send("404: Not Found");
 });
@@ -76,6 +78,7 @@ app.use((req, res) => {
 // === START SERVER ===
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on http://0.0.0.0:${PORT}`);
-  console.log(`✅ Front-end: http://localhost:${PORT}/`);
-  console.log(`✅ Proxy: http://localhost:${PORT}/uv/`);
+  console.log(`✅ Front-end available at http://localhost:${PORT}/`);
+  console.log(`✅ Ultraviolet proxy available at http://localhost:${PORT}/uv/`);
 });
+
