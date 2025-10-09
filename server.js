@@ -1,6 +1,7 @@
-// server.js — Frontend + Ultraviolet (client) + Bare (backend)
+// server.js — Frontend + Ultraviolet client + Bare backend (works on Node 18–22)
 
 import express from "express";
+import http from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import helmet from "helmet";
@@ -10,7 +11,7 @@ import dotenv from "dotenv";
 import { createBareServer } from "@tomphttp/bare-server-node";
 import uvPkg from "@titaniumnetwork-dev/ultraviolet";
 
-const { uvPath } = uvPkg; // client assets path
+const { uvPath } = uvPkg; // path to UV client assets
 
 dotenv.config();
 
@@ -35,9 +36,8 @@ app.get("/", (_req, res) => {
 // ---------- Ultraviolet client assets ----------
 app.use("/uv/", express.static(uvPath));
 
-// UV runtime config (tells the client where the service prefix & bare endpoint are)
+// UV runtime config (adjust if you change prefixes)
 app.get("/uv/uv.config.js", (_req, res) => {
-  // Adjust as needed; these defaults work with this server
   const cfg = `
     self.__uv$config = {
       prefix: '/uv/service/',
@@ -53,16 +53,33 @@ app.get("/uv/uv.config.js", (_req, res) => {
   res.type("application/javascript").send(cfg);
 });
 
-// ---------- Bare backend ----------
+// ---------- Bare backend (attach at HTTP layer, NOT app.use) ----------
 const bare = createBareServer("/bare/");
-app.use("/bare/", bare.middleware);
 
-// 404 (optional)
-app.use((req, res) => res.status(404).send("404: Not Found"));
+// Create a single HTTP server that routes to Bare or Express as needed
+const server = http.createServer((req, res) => {
+  if (bare.shouldRoute(req)) {
+    // Let Bare handle proxied HTTP(S) requests
+    bare.routeRequest(req, res);
+  } else {
+    // Everything else goes to your Express app (frontend + UV client files)
+    app(req, res);
+  }
+});
+
+// Handle WebSocket upgrades (Bare proxies WS too)
+server.on("upgrade", (req, socket, head) => {
+  if (bare.shouldRoute(req)) {
+    bare.routeUpgrade(req, socket, head);
+  } else {
+    socket.destroy(); // nothing else needs WS upgrades here
+  }
+});
 
 // ---------- Start ----------
-app.listen(PORT, "0.0.0.0", () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on http://0.0.0.0:${PORT}`);
-  console.log(`✅ Front-end: http://localhost:${PORT}/`);
-  console.log(`✅ UV client files: http://localhost:${PORT}/uv/`);
+  console.log(`✅ Front-end:     http://localhost:${PORT}/`);
+  console.log(`✅ UV client:     http://localhost:${PORT}/uv/`);
+  console.log(`✅ Bare backend:  http://localhost:${PORT}/bare/ (internal)`);
 });
