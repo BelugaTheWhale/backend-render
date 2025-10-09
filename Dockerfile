@@ -1,20 +1,18 @@
-# Use Node 18+
+# Use Node 18+ (Alpine = small)
 FROM node:18-alpine
 
-# Create app directory
+# Create app dir
 WORKDIR /app
 
-# Copy package files first (for caching)
+# Copy package files and install deps first (layer caching)
 COPY package*.json ./
+RUN npm install --omit=dev
 
-# Install dependencies
-RUN npm install
-
-# Copy all remaining files (including index.html, server.js, etc.)
+# Copy the rest (server.js, index.html, etc.)
 COPY . .
 
-# Expose the port Koyeb expects
+# Expose port
 EXPOSE 3000
 
-# Start the server
+# Run
 CMD ["npm", "start"]
