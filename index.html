@@ -33,7 +33,7 @@
     <div id="status">Loading Ultraviolet…</div>
   </div>
 
-  <!-- UV client assets (order matters) -->
+  <!-- Ultraviolet client scripts -->
   <script src="/uv/uv.bundle.js"></script>
   <script src="/uv/uv.config.js"></script>
   <script src="/uv/uv.handler.js"></script>
@@ -45,52 +45,39 @@
       console.log('[UV]', msg);
     };
 
-    function normalize(u) {
+    const normalize = (u) => {
       u = (u || '').trim();
       if (!u) return '';
       if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
       try { new URL(u); return u; } catch { return ''; }
-    }
-
-    function timeout(ms) {
-      return new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
-    }
+    };
 
     async function ensureUVReady() {
       if (!('serviceWorker' in navigator)) {
-        setStatus('Service workers not supported in this browser.', true);
-        throw new Error('no sw');
+        setStatus('This browser does not support Service Workers.', true);
+        throw new Error('no-sw');
       }
-      // clean any stale SW at /uv/
-      try {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        for (const r of regs) {
-          if (r.scope.endsWith('/uv/') || r.scope.endsWith('/uv')) await r.unregister().catch(()=>{});
-        }
-      } catch {}
-      try {
-        const reg = await navigator.serviceWorker.register(__uv$config.sw, { scope: '/uv/' });
-        await Promise.race([navigator.serviceWorker.ready, timeout(8000)]);
-        setStatus('Ultraviolet is ready.');
-        return reg;
-      } catch (e) {
-        setStatus('Failed to register UV SW: ' + (e?.message || e), true);
-        throw e;
-      }
+      // Register worker from config path
+      const reg = await navigator.serviceWorker.register(__uv$config.sw, { scope: '/uv/' });
+      await navigator.serviceWorker.ready;
+      setStatus('Ultraviolet is ready.');
+      return reg;
     }
 
     async function openViaProxy() {
       const raw = document.getElementById('url').value;
       const url = normalize(raw);
-      if (!url) { setStatus('Please enter a valid URL (e.g., https://example.com).', true); return; }
+      if (!url) { setStatus('Please enter a valid URL.', true); return; }
 
       try {
         await ensureUVReady();
         const encoded = __uv$config.encodeUrl(url);
-        const proxied = __uv$config.prefix + encoded; // /uv/service/<encoded>
-        setStatus('Opening: ' + url);
+        const proxied = __uv$config.prefix + encoded;
+        setStatus('Opening ' + url + '...');
         window.location.href = proxied;
-      } catch {}
+      } catch (e) {
+        setStatus('Failed to open: ' + (e.message || e), true);
+      }
     }
 
     document.getElementById('go').addEventListener('click', openViaProxy);
@@ -98,8 +85,8 @@
       if (e.key === 'Enter') openViaProxy();
     });
 
-    // kick off SW registration ASAP
-    ensureUVReady().catch(()=>{});
+    // Pre-register worker on page load
+    ensureUVReady().catch(err => console.warn('SW error:', err));
   </script>
 </body>
 </html>
