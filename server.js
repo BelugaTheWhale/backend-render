@@ -1,4 +1,4 @@
-// server.js — Frontend + Ultraviolet client + Bare backend (Node 18–22)
+// server.js — Frontend + Ultraviolet (client/worker) + Bare backend (Node 18–22)
 
 import express from "express";
 import http from "http";
@@ -10,30 +10,26 @@ import compression from "compression";
 import morgan from "morgan";
 import dotenv from "dotenv";
 import { createBareServer } from "@tomphttp/bare-server-node";
-import uvPkg from "@titaniumnetwork-dev/ultraviolet"; // CommonJS module
-
-const { uvPath } = uvPkg; // path to UV client assets
+import uvPkg from "@titaniumnetwork-dev/ultraviolet"; // CommonJS-style export
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ----- Resolve __dirname for ES modules -----
+// --- __dirname for ES modules ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ---------------- Middleware ----------------
-app.use(helmet());           // basic security headers
-app.use(compression());      // gzip/deflate
-app.use(morgan("dev"));      // request logs
+app.use(helmet());
+app.use(compression());
+app.use(morgan("dev"));
 
-// Small health check (useful for Koyeb/Render probes)
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
 
 // ------------- Front-end hosting -------------
 // Prefer /public if it exists; otherwise serve from repo root.
-// (So you can keep index.html in root or move it into /public.)
 const candidateA = path.join(__dirname, "public");
 const candidateB = __dirname;
 const staticDir = fs.existsSync(candidateA) ? candidateA : candidateB;
@@ -58,24 +54,25 @@ app.get("/", (_req, res) => {
   }
 });
 
-// -------- Ultraviolet client (static assets) --------
-console.log("uvPath:", uvPath);
+// --------- Ultraviolet client/worker setup ---------
+const { uvPath } = uvPkg; // source folder inside node_modules
+const uvOut = path.join(__dirname, "uv"); // we’ll serve from here
+
 try {
-  console.log("uv files sample:", fs.readdirSync(uvPath).slice(0, 10));
+  fs.mkdirSync(uvOut, { recursive: true });
+  // Node 16+: cpSync supports { recursive: true }
+  fs.cpSync(uvPath, uvOut, { recursive: true });
+  console.log("Copied Ultraviolet assets to:", uvOut);
 } catch (e) {
-  console.log("Cannot read uvPath:", e?.message);
+  console.error("Failed to copy UV assets:", e?.message);
 }
 
-// Serve the UV client assets under /uv/
-// Disable caching for SW & config, and allow SW scope /uv/
+// Serve the copied UV assets under /uv/, with no-cache for SW and config
 app.use(
   "/uv/",
-  express.static(uvPath, {
+  express.static(uvOut, {
     setHeaders(res, filePath) {
-      if (
-        filePath.endsWith("uv.sw.js") ||
-        filePath.endsWith("uv.config.js")
-      ) {
+      if (filePath.endsWith("uv.sw.js") || filePath.endsWith("uv.config.js")) {
         res.setHeader(
           "Cache-Control",
           "no-store, no-cache, must-revalidate, proxy-revalidate"
@@ -88,14 +85,12 @@ app.use(
   })
 );
 
-// Runtime config for the UV client.
-// The SW will control /uv/ and proxied paths will be /uv/service/<encoded>
+// UV runtime config (tells client the paths/prefix)
 app.get("/uv/uv.config.js", (_req, res) => {
   const cfg = `
     self.__uv$config = {
       prefix: '/uv/service/',
       bare: '/bare/',
-      // Use UV's XOR codec on the client; the bundle exposes Ultraviolet global
       encodeUrl: Ultraviolet.codec.xor.encode,
       decodeUrl: Ultraviolet.codec.xor.decode,
       handler: '/uv/uv.handler.js',
@@ -108,10 +103,9 @@ app.get("/uv/uv.config.js", (_req, res) => {
 });
 
 // -------------- Bare backend wiring --------------
-// Bare is not an Express middleware; attach it at the HTTP server layer.
+// Bare is not an Express middleware; attach at HTTP server layer.
 const bare = createBareServer("/bare/");
 
-// Create a single HTTP server that routes to Bare or Express.
 const server = http.createServer((req, res) => {
   if (bare.shouldRoute(req)) {
     bare.routeRequest(req, res);
@@ -120,7 +114,6 @@ const server = http.createServer((req, res) => {
   }
 });
 
-// Proxy WebSocket upgrades through Bare as well
 server.on("upgrade", (req, socket, head) => {
   if (bare.shouldRoute(req)) {
     bare.routeUpgrade(req, socket, head);
@@ -136,6 +129,6 @@ app.use((req, res) => res.status(404).send("404: Not Found"));
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on http://0.0.0.0:${PORT}`);
   console.log(`✅ Front-end:     http://localhost:${PORT}/`);
-  console.log(`✅ UV client:     http://localhost:${PORT}/uv/`);
+  console.log(`✅ UV assets:     http://localhost:${PORT}/uv/`);
   console.log(`✅ Bare backend:  http://localhost:${PORT}/bare/ (internal)`);
 });
