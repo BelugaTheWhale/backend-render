@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stargazer Proxy</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0b0c10;
+      color: #c5c6c7;
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    h1 {
+      color: #66fcf1;
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    p {
+      margin-bottom: 20px;
+      color: #45a29e;
+    }
+    input {
+      width: 300px;
+      padding: 10px;
+      border: none;
+      border-radius: 4px;
+      margin-right: 8px;
+      outline: none;
+      font-size: 1em;
+    }
+    button {
+      background: #45a29e;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1em;
+      color: #0b0c10;
+      font-weight: bold;
+    }
+    button:hover {
+      background: #66fcf1;
+    }
+    footer {
+      position: absolute;
+      bottom: 10px;
+      font-size: 0.85em;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <h1>Stargazer Proxy</h1>
+  <p>Enter a URL to browse through the Ultraviolet proxy:</p>
+
+  <div>
+    <input id="url" type="text" placeholder="https://example.com" />
+    <button onclick="openProxy()">Go</button>
+  </div>
+
+  <footer>Powered by Ultraviolet & Bare Server</footer>
+
+  <script>
+    function formatUrl(u) {
+      if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+      return u;
+    }
+
+    function openProxy() {
+      const input = document.getElementById('url');
+      const url = formatUrl(input.value.trim());
+      if (!url) return alert('Please enter a URL.');
+      const proxied = '/uv/service/' + encodeURIComponent(url);
+      window.location.href = proxied;
+    }
+  </script>
+</body>
+</html>
