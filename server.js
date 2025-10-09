@@ -1,16 +1,16 @@
-// server.js — Frontend + Ultraviolet (client/worker) + Bare backend (Node 18–22)
+// server.js — Minimal, loud, and reliable
+// Frontend + Ultraviolet client/worker (direct from node_modules) + Bare backend
 
 import express from "express";
 import http from "http";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import helmet from "helmet";
 import compression from "compression";
 import morgan from "morgan";
 import dotenv from "dotenv";
 import { createBareServer } from "@tomphttp/bare-server-node";
-import uvPkg from "@titaniumnetwork-dev/ultraviolet"; // CommonJS-style export
+import uvPkg from "@titaniumnetwork-dev/ultraviolet";
 
 dotenv.config();
 
@@ -22,61 +22,59 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ---------------- Middleware ----------------
-app.use(helmet());
 app.use(compression());
 app.use(morgan("dev"));
 
+// (Optional) noisy 404 logger so we can see missing files in logs
+app.use((req, res, next) => {
+  const end = res.end;
+  res.end = function (...args) {
+    if (res.statusCode === 404) {
+      console.warn("404:", req.method, req.originalUrl);
+    }
+    end.apply(this, args);
+  };
+  next();
+});
+
+// Health check
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
 
-// ------------- Front-end hosting -------------
-// Prefer /public if it exists; otherwise serve from repo root.
+// ---------------- Frontend ----------------
+// Serve from /public if present; else repo root
 const candidateA = path.join(__dirname, "public");
-const candidateB = __dirname;
-const staticDir = fs.existsSync(candidateA) ? candidateA : candidateB;
-
-console.log("Static directory:", staticDir);
-console.log("Expecting index.html at:", path.join(staticDir, "index.html"));
-
+const staticDir = fs.existsSync(candidateA) ? candidateA : __dirname;
 app.use(express.static(staticDir));
 
 app.get("/", (_req, res) => {
   const indexPath = path.join(staticDir, "index.html");
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
-  } else {
-    res
-      .status(404)
-      .send(
-        `index.html not found at ${indexPath}.<br/>` +
-          `Static dir is ${staticDir}.<br/>` +
-          `Ensure the file is committed and deployed.`
-      );
-  }
+  if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
+  return res
+    .status(404)
+    .send(
+      `index.html not found at ${indexPath}<br/>Static dir: ${staticDir}`
+    );
 });
 
-// --------- Ultraviolet client/worker setup ---------
-const { uvPath } = uvPkg; // source folder inside node_modules
-const uvOut = path.join(__dirname, "uv"); // we’ll serve from here
+// ---------------- UV client/worker ----------------
+const { uvPath } = uvPkg;
+console.log("uvPath (from package):", uvPath);
 
 try {
-  fs.mkdirSync(uvOut, { recursive: true });
-  // Node 16+: cpSync supports { recursive: true }
-  fs.cpSync(uvPath, uvOut, { recursive: true });
-  console.log("Copied Ultraviolet assets to:", uvOut);
+  const sample = fs.readdirSync(uvPath).slice(0, 10);
+  console.log("uvPath sample files:", sample);
 } catch (e) {
-  console.error("Failed to copy UV assets:", e?.message);
+  console.error("Cannot read uvPath:", e?.message);
 }
 
-// Serve the copied UV assets under /uv/, with no-cache for SW and config
+// Serve *all* UV files directly from node_modules path
 app.use(
   "/uv/",
-  express.static(uvOut, {
+  express.static(uvPath, {
     setHeaders(res, filePath) {
+      // Critical: worker + config must not be cached; allow /uv/ scope
       if (filePath.endsWith("uv.sw.js") || filePath.endsWith("uv.config.js")) {
-        res.setHeader(
-          "Cache-Control",
-          "no-store, no-cache, must-revalidate, proxy-revalidate"
-        );
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
         res.setHeader("Pragma", "no-cache");
         res.setHeader("Expires", "0");
         res.setHeader("Service-Worker-Allowed", "/uv/");
@@ -85,7 +83,29 @@ app.use(
   })
 );
 
-// UV runtime config (tells client the paths/prefix)
+// Redundant explicit routes (belt + suspenders) with headers
+function sendUvFile(rel) {
+  return (req, res) => {
+    const p = path.join(uvPath, rel);
+    if (!fs.existsSync(p)) {
+      console.error("UV file missing:", p);
+      return res.status(404).send(`Missing UV file: ${rel}`);
+    }
+    if (rel.endsWith("uv.sw.js") || rel.endsWith("uv.config.js")) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      res.setHeader("Service-Worker-Allowed", "/uv/");
+    }
+    res.sendFile(p);
+  };
+}
+
+app.get("/uv/uv.bundle.js", sendUvFile("uv.bundle.js"));
+app.get("/uv/uv.handler.js", sendUvFile("uv.handler.js"));
+app.get("/uv/uv.sw.js", sendUvFile("uv.sw.js"));
+
+// Runtime config (must match paths above)
 app.get("/uv/uv.config.js", (_req, res) => {
   const cfg = `
     self.__uv$config = {
@@ -99,11 +119,12 @@ app.get("/uv/uv.config.js", (_req, res) => {
       client: '/uv/index.html'
     };
   `.trim();
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Service-Worker-Allowed", "/uv/");
   res.type("application/javascript").send(cfg);
 });
 
-// -------------- Bare backend wiring --------------
-// Bare is not an Express middleware; attach at HTTP server layer.
+// ---------------- Bare backend wiring ----------------
 const bare = createBareServer("/bare/");
 
 const server = http.createServer((req, res) => {
@@ -122,13 +143,15 @@ server.on("upgrade", (req, socket, head) => {
   }
 });
 
-// --------------- Fallback 404 ----------------
+// ---------------- Fallback 404 ----------------
 app.use((req, res) => res.status(404).send("404: Not Found"));
 
-// ----------------- Start ---------------------
+// ---------------- Start ----------------
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server running on http://0.0.0.0:${PORT}`);
-  console.log(`✅ Front-end:     http://localhost:${PORT}/`);
-  console.log(`✅ UV assets:     http://localhost:${PORT}/uv/`);
-  console.log(`✅ Bare backend:  http://localhost:${PORT}/bare/ (internal)`);
+  console.log(`✅ Server on http://0.0.0.0:${PORT}`);
+  console.log(`✅ Test these must be 200:`);
+  console.log(`   /uv/uv.bundle.js`);
+  console.log(`   /uv/uv.handler.js`);
+  console.log(`   /uv/uv.sw.js`);
+  console.log(`   /uv/uv.config.js`);
 });
