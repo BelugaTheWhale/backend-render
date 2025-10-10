@@ -1,4 +1,4 @@
-// server.js — Final version: Frontend + Ultraviolet client + Bare backend
+// server.js — Frontend + Ultraviolet client/worker + Bare backend (Node 18–22)
 
 import express from "express";
 import http from "http";
@@ -10,7 +10,7 @@ import compression from "compression";
 import morgan from "morgan";
 import dotenv from "dotenv";
 import { createBareServer } from "@tomphttp/bare-server-node";
-import uvPkg from "@titaniumnetwork-dev/ultraviolet"; // CommonJS export
+import uvPkg from "@titaniumnetwork-dev/ultraviolet";
 
 dotenv.config();
 
@@ -30,21 +30,20 @@ app.use(morgan("dev"));
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
 
 // -------- Frontend --------
+// Serve from repo root (or move your files to /public and adjust if you like)
 const staticDir = __dirname;
 app.use(express.static(staticDir));
+app.get("/", (_req, res) => res.sendFile(path.join(staticDir, "index.html")));
 
-app.get("/", (_req, res) => {
-  res.sendFile(path.join(staticDir, "index.html"));
-});
-
-// -------- Ultraviolet (client + worker) --------
+// -------- Ultraviolet (client + service worker) --------
 const { uvPath } = uvPkg;
 
-// Serve all UV files directly from node_modules
+// Serve UV files directly from the package
 app.use(
   "/uv/",
   express.static(uvPath, {
     setHeaders(res, filePath) {
+      // SW + config must not be cached; allow scope
       if (filePath.endsWith("uv.sw.js") || filePath.endsWith("uv.config.js")) {
         res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
         res.setHeader("Service-Worker-Allowed", "/uv/");
@@ -53,7 +52,7 @@ app.use(
   })
 );
 
-// Ensure /uv.sw.js works too (alias for browsers registering root-level SW)
+// Also expose /uv.sw.js at root in case a script references it there
 app.get("/uv.sw.js", (_req, res) => {
   const swPath = path.join(uvPath, "uv.sw.js");
   if (fs.existsSync(swPath)) {
@@ -65,19 +64,22 @@ app.get("/uv.sw.js", (_req, res) => {
   }
 });
 
-// Runtime UV config
-app.get("/uv/uv.config.js", (_req, res) => {
+// Runtime UV config with absolute URLs (avoids scope/proxy confusion)
+app.get("/uv/uv.config.js", (req, res) => {
+  const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
+  const host  = req.headers["x-forwarded-host"] || req.headers.host;
+  const base  = `${proto}://${host}`;
   const cfg = `
+    // Ultraviolet runtime config (absolute URLs)
     self.__uv$config = {
-      prefix: '/uv/service/',
-      bare: '/bare/',
+      prefix: '${base}/uv/service/',
+      bare:   '${base}/bare/',
       encodeUrl: Ultraviolet.codec.xor.encode,
       decodeUrl: Ultraviolet.codec.xor.decode,
-      handler: '/uv/uv.handler.js',
-      bundle: '/uv/uv.bundle.js',
-      // ✅ Correct SW path now:
-      sw: '/uv/uv.sw.js',
-      client: '/uv/index.html'
+      handler: '${base}/uv/uv.handler.js',
+      bundle:  '${base}/uv/uv.bundle.js',
+      sw:      '${base}/uv/uv.sw.js',
+      client:  '${base}/uv/index.html'
     };
   `.trim();
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
@@ -85,7 +87,7 @@ app.get("/uv/uv.config.js", (_req, res) => {
   res.type("application/javascript").send(cfg);
 });
 
-// -------- Bare backend --------
+// -------- Bare backend wiring (attach at HTTP layer) --------
 const bare = createBareServer("/bare/");
 
 const server = http.createServer((req, res) => {
@@ -107,7 +109,7 @@ server.on("upgrade", (req, socket, head) => {
 // -------- Start --------
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Running on http://0.0.0.0:${PORT}`);
-  console.log(`✅ Frontend:     /`);
-  console.log(`✅ UV files:     /uv/uv.bundle.js`);
-  console.log(`✅ ServiceWorker: /uv/uv.sw.js`);
+  console.log(`✅ Frontend:       /`);
+  console.log(`✅ UV assets:      /uv/uv.bundle.js`);
+  console.log(`✅ UV serviceworker: /uv/uv.sw.js`);
 });
