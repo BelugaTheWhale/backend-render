@@ -33,7 +33,7 @@
     <div id="status">Loading Ultraviolet…</div>
   </div>
 
-  <!-- Ultraviolet client scripts -->
+  <!-- Ultraviolet client assets (order matters) -->
   <script src="/uv/uv.bundle.js"></script>
   <script src="/uv/uv.config.js"></script>
   <script src="/uv/uv.handler.js"></script>
@@ -57,7 +57,6 @@
         setStatus('This browser does not support Service Workers.', true);
         throw new Error('no-sw');
       }
-      // Register worker from config path
       const reg = await navigator.serviceWorker.register(__uv$config.sw, { scope: '/uv/' });
       await navigator.serviceWorker.ready;
       setStatus('Ultraviolet is ready.');
@@ -72,8 +71,8 @@
       try {
         await ensureUVReady();
         const encoded = __uv$config.encodeUrl(url);
-        const proxied = __uv$config.prefix + encoded;
-        setStatus('Opening ' + url + '...');
+        const proxied = __uv$config.prefix + encoded; // /uv/service/<encoded>
+        setStatus('Opening: ' + url);
         window.location.href = proxied;
       } catch (e) {
         setStatus('Failed to open: ' + (e.message || e), true);
@@ -85,7 +84,7 @@
       if (e.key === 'Enter') openViaProxy();
     });
 
-    // Pre-register worker on page load
+    // Pre-register worker on load
     ensureUVReady().catch(err => console.warn('SW error:', err));
   </script>
 </body>
